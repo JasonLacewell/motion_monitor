@@ -1,0 +1,17 @@
+# Virtual environment
+venv/
+
+# Real config (contains Telegram credentials) - never commit this
+config/config.json
+
+# Captured photos/videos
+motion_media/
+*.jpg
+*.mp4
+
+# Python
+__pycache__/
+*.pyc
+
+# macOS
+.DS_Store

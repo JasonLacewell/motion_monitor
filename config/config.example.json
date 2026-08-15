@@ -1,0 +1,30 @@
+{
+  "camera_index": 0,
+
+  "media_dir": "~/motion_media",
+
+  "detection": {
+    "pixel_change_threshold": 5,
+    "motion_percent_threshold": 0.75,
+    "cooldown_seconds": 45,
+    "warmup_frames": 30
+  },
+
+  "photo": {
+    "jpeg_quality": 90
+  },
+
+  "video": {
+    "record_seconds": 20,
+    "ffmpeg_video_device": "0",
+    "ffmpeg_audio_device": "0",
+    "ffmpeg_framerate": 30,
+    "ffmpeg_resolution": "1280x720"
+  },
+
+  "telegram": {
+    "enabled": true,
+    "bot_token": "PASTE_YOUR_BOT_TOKEN_HERE",
+    "chat_id": "PASTE_YOUR_CHAT_ID_HERE"
+  }
+}
