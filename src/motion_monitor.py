@@ -62,11 +62,6 @@ CAMERA_INDEX = CONFIG["camera_index"]
 MEDIA_DIR = Path(CONFIG["media_dir"]).expanduser()
 MEDIA_DIR.mkdir(parents=True, exist_ok=True)
 
-PIXEL_CHANGE_THRESHOLD = CONFIG["detection"]["pixel_change_threshold"]
-MOTION_PERCENT_THRESHOLD = CONFIG["detection"]["motion_percent_threshold"]
-COOLDOWN_SECONDS = CONFIG["detection"]["cooldown_seconds"]
-WARMUP_FRAMES = CONFIG["detection"]["warmup_frames"]
-
 JPEG_QUALITY = CONFIG["photo"]["jpeg_quality"]
 
 VIDEO_ENABLED = CONFIG["video"].get("enabled", True)
@@ -82,6 +77,15 @@ SEND_TELEGRAM = CONFIG["telegram"]["enabled"]
 TELEGRAM_TOKEN = CONFIG["telegram"]["bot_token"]
 TELEGRAM_CHAT_ID = CONFIG["telegram"]["chat_id"]
 
+PIXEL_CHANGE_THRESHOLD = CONFIG["detection"]["pixel_change_threshold"]
+MOTION_PERCENT_THRESHOLD = CONFIG["detection"]["motion_percent_threshold"]
+
+if VIDEO_ENABLED:
+    COOLDOWN_SECONDS = RECORD_SECONDS + 5
+else:
+    COOLDOWN_SECONDS = CONFIG["detection"]["cooldown_seconds"]
+
+WARMUP_FRAMES = CONFIG["detection"]["warmup_frames"]
 
 # ----------------------------
 # Telegram
@@ -255,12 +259,12 @@ def main():
     print("=== Motion Monitor starting ===")
     if CALIBRATE_MODE:
         print("  *** CALIBRATION MODE *** - no photos/video will be saved, nothing sent to Telegram")
-    print(f"  video recording: {'ON' if VIDEO_ENABLED else 'OFF'}")
-    print(f"  audio in clips:  {'ON' if AUDIO_ENABLED else 'OFF'}" + ("" if VIDEO_ENABLED else " (irrelevant, video is off)"))
-    print(f"  pixel_change_threshold:   {PIXEL_CHANGE_THRESHOLD}")
-    print(f"  motion_percent_threshold: {MOTION_PERCENT_THRESHOLD}%")
-    print("Watch the [calibrate] line below to tune those two values in config/config.json.")
-    print()
+        print(f"  video recording: {'ON' if VIDEO_ENABLED else 'OFF'}")
+        print(f"  audio in clips:  {'ON' if AUDIO_ENABLED else 'OFF'}" + ("" if VIDEO_ENABLED else " (irrelevant, video is off)"))
+        print(f"  pixel_change_threshold:   {PIXEL_CHANGE_THRESHOLD}")
+        print(f"  motion_percent_threshold: {MOTION_PERCENT_THRESHOLD}%")
+        print("Watch the [calibrate] line below to tune those two values in config/config.json.")
+        print()
 
     camera = cv2.VideoCapture(CAMERA_INDEX, cv2.CAP_AVFOUNDATION)
     if not camera.isOpened():
@@ -296,14 +300,15 @@ def main():
             changed_percentage, _threshold_img, diff_stats = detect_motion(previous_frame, current_frame)
 
             # Live calibration printout - overwrites the same terminal line.
-            print(
-                f"\r[calibrate] max_pixel_diff={diff_stats['max_diff']:>3} "
-                f"(pixel_change_threshold={PIXEL_CHANGE_THRESHOLD})  |  "
-                f"frame_changed={changed_percentage:6.2f}% "
-                f"(motion_percent_threshold={MOTION_PERCENT_THRESHOLD}%)   ",
-                end="",
-                flush=True,
-            )
+            if CALIBRATE_MODE:    
+                print(
+                    f"\r[calibrate] max_pixel_diff={diff_stats['max_diff']:>3} "
+                    f"(pixel_change_threshold={PIXEL_CHANGE_THRESHOLD})  |  "
+                    f"frame_changed={changed_percentage:6.2f}% "
+                    f"(motion_percent_threshold={MOTION_PERCENT_THRESHOLD}%)   ",
+                    end="",
+                    flush=True,
+                )
 
             now = time.time()
 
@@ -332,9 +337,26 @@ def main():
                     if clip:
                         print(f"[video] Saved {clip}")
                         send_telegram_video(clip)
+
                     camera = cv2.VideoCapture(CAMERA_INDEX, cv2.CAP_AVFOUNDATION)
 
+                    # Re-warm: auto-exposure/white balance need a moment to settle,
+                    # and the old previous_frame is stale. Comparing against it
+                    # causes a false-positive trigger that loops forever.
+                    print(f"[video] Re-warming camera for {WARMUP_FRAMES} frames after reopen...")
+                    previous_frame = None
+                    for _ in range(WARMUP_FRAMES):
+                        ok, warm_frame = camera.read()
+                        if not ok:
+                            continue
+                        previous_frame = preprocess(warm_frame)
+
+                    # Reset cooldown so we don't instantly re-trigger either.
+                    last_motion_time = time.time()
+
                 print()  # blank line before calibration printout resumes
+                print("[running] Monitoring for motion...\n")    
+
 
             previous_frame = current_frame
 
