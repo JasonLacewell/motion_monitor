@@ -62,6 +62,11 @@ chat id (see below for how to get these).
 This activates the virtual environment for you and starts the monitor.
 Press `Ctrl+C` to stop.
 
+```bash
+./run.sh --calibrate 
+```
+This activates the virtual environment and starts the monitor in calibration mode: Only data on actual pixel differences and % of frame change will be printed to the terminal. No images, video or audio will be saved. 
+
 ## Configuration
 
 All tunable settings live in `config/config.json`. This file is
@@ -78,11 +83,13 @@ committed to the repo.
 | `detection` | `cooldown_seconds`         | Minimum gap between motion triggers                         |
 | `detection` | `warmup_frames`            | Frames used to establish the initial background             |
 | `photo`     | `jpeg_quality`              | JPEG quality, 0–100                                          |
+| `video`     | `enabled`                  | Set `false` to disable video recording                      |
 | `video`     | `record_seconds`           | Length of each recorded clip                                 |
 | `video`     | `ffmpeg_video_device`      | Camera device index for ffmpeg (see below)                  |
 | `video`     | `ffmpeg_audio_device`      | Microphone device index for ffmpeg (see below)               |
 | `video`     | `ffmpeg_framerate`         | Recording framerate                                          |
 | `video`     | `ffmpeg_resolution`        | Recording resolution                                         |
+| `audio`     | `enabled`                  | Set `false` to disable audio recording                       |
 | `telegram`  | `enabled`                  | Set `false` to disable Telegram entirely and stay fully local |
 | `telegram`  | `bot_token`                | Your bot's token from BotFather                              |
 | `telegram`  | `chat_id`                  | Your personal chat id                                        |

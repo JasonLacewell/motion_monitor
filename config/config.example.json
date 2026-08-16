@@ -1,10 +1,10 @@
 {
   "camera_index": 0,
 
-  "media_dir": "~/motion_media",
+  "media_dir": "./motion_media",
 
   "detection": {
-    "pixel_change_threshold": 5,
+    "pixel_change_threshold": 20,
     "motion_percent_threshold": 0.75,
     "cooldown_seconds": 45,
     "warmup_frames": 30
@@ -15,11 +15,16 @@
   },
 
   "video": {
+    "enabled": true,
     "record_seconds": 20,
     "ffmpeg_video_device": "0",
     "ffmpeg_audio_device": "0",
     "ffmpeg_framerate": 30,
     "ffmpeg_resolution": "1280x720"
+  },
+
+  "audio": {
+    "enabled": true
   },
 
   "telegram": {
