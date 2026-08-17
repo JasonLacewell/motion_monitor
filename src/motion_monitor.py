@@ -28,7 +28,6 @@ Calibration mode:
     python3 src/motion_monitor.py --calibrate
 """
 
-import json
 import subprocess
 import sys
 import time
@@ -38,91 +37,41 @@ from pathlib import Path
 import cv2
 import requests
 
+from config import Config
+
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-CONFIG_PATH = PROJECT_ROOT / "config" / "config.json"
-CONFIG_EXAMPLE_PATH = PROJECT_ROOT / "config" / "config.example.json"
-
-
-def load_config():
-    """Load config/config.json, with a clear error if it's missing."""
-    if not CONFIG_PATH.exists():
-        print("No config/config.json found.")
-        print(f"Copy {CONFIG_EXAMPLE_PATH.name} to config.json and edit it:")
-        print(f"  cp {CONFIG_EXAMPLE_PATH} {CONFIG_PATH}")
-        sys.exit(1)
-    with open(CONFIG_PATH, "r") as f:
-        return json.load(f)
-
 
 CALIBRATE_MODE = "--calibrate" in sys.argv
 
-CONFIG = load_config()
+CONFIG = Config.load(PROJECT_ROOT)
 
-CAMERA_INDEX = CONFIG["camera_index"]
-MEDIA_DIR = Path(CONFIG["media_dir"]).expanduser()
-MEDIA_DIR.mkdir(parents=True, exist_ok=True)
-
-JPEG_QUALITY = CONFIG["photo"]["jpeg_quality"]
-
-VIDEO_ENABLED = CONFIG["video"].get("enabled", True)
-RECORD_SECONDS = CONFIG["video"]["record_seconds"]
-FFMPEG_VIDEO_DEVICE = CONFIG["video"]["ffmpeg_video_device"]
-FFMPEG_AUDIO_DEVICE = CONFIG["video"]["ffmpeg_audio_device"]
-FFMPEG_FRAMERATE = CONFIG["video"]["ffmpeg_framerate"]
-FFMPEG_RESOLUTION = CONFIG["video"]["ffmpeg_resolution"]
-
-AUDIO_ENABLED = CONFIG.get("audio", {}).get("enabled", True)
-
-SEND_TELEGRAM = CONFIG["telegram"]["enabled"]
-TELEGRAM_TOKEN = CONFIG["telegram"]["bot_token"]
-TELEGRAM_CHAT_ID = CONFIG["telegram"]["chat_id"]
-
-PIXEL_CHANGE_THRESHOLD = CONFIG["detection"]["pixel_change_threshold"]
-MOTION_PERCENT_THRESHOLD = CONFIG["detection"]["motion_percent_threshold"]
-
-if VIDEO_ENABLED:
-    COOLDOWN_SECONDS = RECORD_SECONDS + 5
-else:
-    COOLDOWN_SECONDS = CONFIG["detection"]["cooldown_seconds"]
-
-WARMUP_FRAMES = CONFIG["detection"]["warmup_frames"]
 
 # ----------------------------
 # Telegram
 # ----------------------------
 
-def telegram_is_configured():
-    placeholder_values = {"", "PASTE_YOUR_BOT_TOKEN_HERE", "PASTE_YOUR_CHAT_ID_HERE"}
-    if not SEND_TELEGRAM:
-        return False
-    if TELEGRAM_TOKEN in placeholder_values or TELEGRAM_CHAT_ID in placeholder_values:
-        print("[telegram] Credentials missing/placeholder - skipping upload, saving locally only.")
-        return False
-    return True
-
-
 def send_telegram_text(text: str):
     """Send a plain text status message to Telegram."""
-    if not telegram_is_configured():
+    if not CONFIG.telegram_is_configured():
         return
-    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+    url = f"https://api.telegram.org/bot{CONFIG.telegram_token}/sendMessage"
     try:
-        requests.post(url, data={"chat_id": TELEGRAM_CHAT_ID, "text": text}, timeout=15)
+        requests.post(url, data={"chat_id": CONFIG.telegram_chat_id, "text": text}, timeout=15)
     except requests.RequestException as e:
         print(f"[telegram] Failed to send text: {e}")
 
 
 def send_telegram_photo(image_path: Path):
     """Send one snapshot to Telegram as a photo message."""
-    if not telegram_is_configured():
+    if not CONFIG.telegram_is_configured():
         return
-    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPhoto"
+    url = f"https://api.telegram.org/bot{CONFIG.telegram_token}/sendPhoto"
     caption = f"Motion detected - {datetime.now():%Y-%m-%d %H:%M:%S}"
     try:
         with open(image_path, "rb") as f:
             requests.post(
                 url,
-                data={"chat_id": TELEGRAM_CHAT_ID, "caption": caption},
+                data={"chat_id": CONFIG.telegram_chat_id, "caption": caption},
                 files={"photo": f},
                 timeout=30,
             )
@@ -132,18 +81,18 @@ def send_telegram_photo(image_path: Path):
 
 def send_telegram_video(video_path: Path):
     """Send one motion clip to Telegram as a video message."""
-    if not telegram_is_configured():
+    if not CONFIG.telegram_is_configured():
         return
     file_size_mb = video_path.stat().st_size / (1024 * 1024)
     if file_size_mb > 50:
         print(f"[telegram] Clip is {file_size_mb:.1f} MB, over Telegram's 50MB bot limit - skipping upload.")
         return
-    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendVideo"
+    url = f"https://api.telegram.org/bot{CONFIG.telegram_token}/sendVideo"
     try:
         with open(video_path, "rb") as f:
             requests.post(
                 url,
-                data={"chat_id": TELEGRAM_CHAT_ID},
+                data={"chat_id": CONFIG.telegram_chat_id},
                 files={"video": f},
                 timeout=120,
             )
@@ -187,7 +136,7 @@ def detect_motion(previous, current):
     max_diff = int(difference.max())
     mean_diff = float(difference.mean())
 
-    _, threshold = cv2.threshold(difference, PIXEL_CHANGE_THRESHOLD, 255, cv2.THRESH_BINARY)
+    _, threshold = cv2.threshold(difference, CONFIG.pixel_change_threshold, 255, cv2.THRESH_BINARY)
     threshold = cv2.dilate(threshold, None, iterations=2)
 
     changed_pixels = cv2.countNonZero(threshold)
@@ -202,10 +151,10 @@ def detect_motion(previous, current):
 def save_snapshot(frame):
     """Save a single JPEG snapshot from the current frame."""
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    path = MEDIA_DIR / f"motion_{timestamp}.jpg"
+    path = CONFIG.media_dir / f"motion_{timestamp}.jpg"
 
     success = cv2.imwrite(
-        str(path), frame, [cv2.IMWRITE_JPEG_QUALITY, JPEG_QUALITY]
+        str(path), frame, [cv2.IMWRITE_JPEG_QUALITY, CONFIG.jpeg_quality]
     )
     if not success:
         print(f"[photo] Failed to write snapshot to {path}")
@@ -223,28 +172,28 @@ def record_clip_with_audio(seconds: int):
     won't let two processes hold the camera open at once.
     """
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    path = MEDIA_DIR / f"motion_{timestamp}.mp4"
+    path = CONFIG.media_dir / f"motion_{timestamp}.mp4"
 
-    if AUDIO_ENABLED:
-        device_string = f"{FFMPEG_VIDEO_DEVICE}:{FFMPEG_AUDIO_DEVICE}"
+    if CONFIG.audio_enabled:
+        device_string = f"{CONFIG.ffmpeg_video_device}:{CONFIG.ffmpeg_audio_device}"
     else:
-        device_string = f"{FFMPEG_VIDEO_DEVICE}:none"
+        device_string = f"{CONFIG.ffmpeg_video_device}:none"
 
     command = [
         "ffmpeg",
         "-y",
         "-f", "avfoundation",
-        "-framerate", str(FFMPEG_FRAMERATE),
-        "-video_size", FFMPEG_RESOLUTION,
+        "-framerate", str(CONFIG.ffmpeg_framerate),
+        "-video_size", CONFIG.ffmpeg_resolution,
         "-i", device_string,
         "-t", str(seconds),
         "-pix_fmt", "yuv420p",
     ]
-    if not AUDIO_ENABLED:
+    if not CONFIG.audio_enabled:
         command += ["-an"]
     command.append(str(path))
 
-    print(f"[video] Recording {seconds}s clip (audio={'on' if AUDIO_ENABLED else 'off'})...")
+    print(f"[video] Recording {seconds}s clip (audio={'on' if CONFIG.audio_enabled else 'off'})...")
     result = subprocess.run(command, capture_output=True, text=True)
     if result.returncode != 0:
         print("[video] ffmpeg failed:")
@@ -259,21 +208,21 @@ def main():
     print("=== Motion Monitor starting ===")
     if CALIBRATE_MODE:
         print("  *** CALIBRATION MODE *** - no photos/video will be saved, nothing sent to Telegram")
-        print(f"  video recording: {'ON' if VIDEO_ENABLED else 'OFF'}")
-        print(f"  audio in clips:  {'ON' if AUDIO_ENABLED else 'OFF'}" + ("" if VIDEO_ENABLED else " (irrelevant, video is off)"))
-        print(f"  pixel_change_threshold:   {PIXEL_CHANGE_THRESHOLD}")
-        print(f"  motion_percent_threshold: {MOTION_PERCENT_THRESHOLD}%")
+        print(f"  video recording: {'ON' if CONFIG.video_enabled else 'OFF'}")
+        print(f"  audio in clips:  {'ON' if CONFIG.audio_enabled else 'OFF'}" + ("" if CONFIG.video_enabled else " (irrelevant, video is off)"))
+        print(f"  pixel_change_threshold:   {CONFIG.pixel_change_threshold}")
+        print(f"  motion_percent_threshold: {CONFIG.motion_percent_threshold}%")
         print("Watch the [calibrate] line below to tune those two values in config/config.json.")
         print()
 
-    camera = cv2.VideoCapture(CAMERA_INDEX, cv2.CAP_AVFOUNDATION)
+    camera = cv2.VideoCapture(CONFIG.camera_index, cv2.CAP_AVFOUNDATION)
     if not camera.isOpened():
         print("[camera] Could not open camera.")
         sys.exit(1)
 
     previous_frame = None
-    print(f"[startup] Warming up for {WARMUP_FRAMES} frames to establish baseline...")
-    for _ in range(WARMUP_FRAMES):
+    print(f"[startup] Warming up for {CONFIG.warmup_frames} frames to establish baseline...")
+    for _ in range(CONFIG.warmup_frames):
         ok, frame = camera.read()
         if not ok:
             continue
@@ -300,19 +249,19 @@ def main():
             changed_percentage, _threshold_img, diff_stats = detect_motion(previous_frame, current_frame)
 
             # Live calibration printout - overwrites the same terminal line.
-            if CALIBRATE_MODE:    
+            if CALIBRATE_MODE:
                 print(
                     f"\r[calibrate] max_pixel_diff={diff_stats['max_diff']:>3} "
-                    f"(pixel_change_threshold={PIXEL_CHANGE_THRESHOLD})  |  "
+                    f"(pixel_change_threshold={CONFIG.pixel_change_threshold})  |  "
                     f"frame_changed={changed_percentage:6.2f}% "
-                    f"(motion_percent_threshold={MOTION_PERCENT_THRESHOLD}%)   ",
+                    f"(motion_percent_threshold={CONFIG.motion_percent_threshold}%)   ",
                     end="",
                     flush=True,
                 )
 
             now = time.time()
 
-            if changed_percentage > MOTION_PERCENT_THRESHOLD and (now - last_motion_time) > COOLDOWN_SECONDS:
+            if changed_percentage > CONFIG.motion_percent_threshold and (now - last_motion_time) > CONFIG.cooldown_seconds:
                 last_motion_time = now
                 timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
@@ -329,23 +278,23 @@ def main():
                     print(f"[photo] Saved {photo}")
                     send_telegram_photo(photo)
 
-                if VIDEO_ENABLED:
+                if CONFIG.video_enabled:
                     # ffmpeg needs exclusive access to the camera, so
                     # release OpenCV's handle first and reopen after.
                     camera.release()
-                    clip = record_clip_with_audio(RECORD_SECONDS)
+                    clip = record_clip_with_audio(CONFIG.record_seconds)
                     if clip:
                         print(f"[video] Saved {clip}")
                         send_telegram_video(clip)
 
-                    camera = cv2.VideoCapture(CAMERA_INDEX, cv2.CAP_AVFOUNDATION)
+                    camera = cv2.VideoCapture(CONFIG.camera_index, cv2.CAP_AVFOUNDATION)
 
                     # Re-warm: auto-exposure/white balance need a moment to settle,
                     # and the old previous_frame is stale. Comparing against it
                     # causes a false-positive trigger that loops forever.
-                    print(f"[video] Re-warming camera for {WARMUP_FRAMES} frames after reopen...")
+                    print(f"[video] Re-warming camera for {CONFIG.warmup_frames} frames after reopen...")
                     previous_frame = None
-                    for _ in range(WARMUP_FRAMES):
+                    for _ in range(CONFIG.warmup_frames):
                         ok, warm_frame = camera.read()
                         if not ok:
                             continue
@@ -355,8 +304,7 @@ def main():
                     last_motion_time = time.time()
 
                 print()  # blank line before calibration printout resumes
-                print("[running] Monitoring for motion...\n")    
-
+                print("[running] Monitoring for motion...\n")
 
             previous_frame = current_frame
 
