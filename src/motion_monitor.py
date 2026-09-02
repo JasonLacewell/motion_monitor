@@ -38,6 +38,8 @@ import cv2
 import requests
 
 from config import Config
+from detection.frame_difference import FrameDifferenceDetector
+from telegram_control import ControlState, TelegramCommandListener
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
@@ -114,40 +116,6 @@ def start_caffeinate():
     return process
 
 
-def preprocess(frame):
-    """Convert a camera frame into a smaller grayscale image."""
-    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-    gray = cv2.resize(gray, (640, 480))
-    gray = cv2.GaussianBlur(gray, (21, 21), 0)
-    return gray
-
-
-def detect_motion(previous, current):
-    """
-    Compare two frames.
-    Returns:
-        changed_percentage, threshold_image, diff_stats
-    diff_stats is a dict with 'max_diff' and 'mean_diff', the raw
-    per-pixel intensity differences before thresholding - useful for
-    calibrating pixel_change_threshold.
-    """
-    difference = cv2.absdiff(previous, current)
-
-    max_diff = int(difference.max())
-    mean_diff = float(difference.mean())
-
-    _, threshold = cv2.threshold(difference, CONFIG.pixel_change_threshold, 255, cv2.THRESH_BINARY)
-    threshold = cv2.dilate(threshold, None, iterations=2)
-
-    changed_pixels = cv2.countNonZero(threshold)
-    total_pixels = threshold.shape[0] * threshold.shape[1]
-
-    changed_percentage = (changed_pixels / total_pixels) * 100.0
-
-    diff_stats = {"max_diff": max_diff, "mean_diff": mean_diff}
-    return changed_percentage, threshold, diff_stats
-
-
 def save_snapshot(frame):
     """Save a single JPEG snapshot from the current frame."""
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -202,58 +170,125 @@ def record_clip_with_audio(seconds: int):
     return path
 
 
+def wait_before_starting(delay_seconds: int, control_state: ControlState) -> bool:
+    """
+    Block for delay_seconds before the camera baseline is ever captured,
+    printing a live countdown. This must happen BEFORE camera warmup -
+    if you're still in frame when warmup runs, you become part of the
+    baseline, and leaving afterward would itself register as motion.
+
+    Checks control_state each second so a SHUTDOWN command sent during the
+    countdown is honored immediately instead of waiting out the full delay.
+    Returns False if shutdown was requested during the wait.
+    """
+    if delay_seconds <= 0:
+        return True
+    print(f"[startup] Starting in {delay_seconds}s - move out of camera view now...")
+    remaining = delay_seconds
+    while remaining > 0:
+        if control_state.is_shutdown_requested:
+            print("\n[shutdown] Shutdown requested during startup delay.")
+            return False
+        print(f"\r[startup] {remaining}s remaining...   ", end="", flush=True)
+        time.sleep(1)
+        remaining -= 1
+    print("\r[startup] Starting now.                       ")
+    return True
+
+
 def main():
+    control_state = ControlState()
+    listener = TelegramCommandListener(CONFIG, control_state)
+    listener.start()
+
     caffeinate_process = start_caffeinate()
+
+    detector = FrameDifferenceDetector(
+        pixel_change_threshold=CONFIG.pixel_change_threshold,
+        motion_percent_threshold=CONFIG.motion_percent_threshold,
+    )
 
     print("=== Motion Monitor starting ===")
     if CALIBRATE_MODE:
         print("  *** CALIBRATION MODE *** - no photos/video will be saved, nothing sent to Telegram")
         print(f"  video recording: {'ON' if CONFIG.video_enabled else 'OFF'}")
         print(f"  audio in clips:  {'ON' if CONFIG.audio_enabled else 'OFF'}" + ("" if CONFIG.video_enabled else " (irrelevant, video is off)"))
+        print(f"  detector: {detector.name}")
         print(f"  pixel_change_threshold:   {CONFIG.pixel_change_threshold}")
         print(f"  motion_percent_threshold: {CONFIG.motion_percent_threshold}%")
         print("Watch the [calibrate] line below to tune those two values in config/config.json.")
         print()
+
+    if not wait_before_starting(CONFIG.startup_delay_seconds, control_state):
+        listener.stop()
+        caffeinate_process.terminate()
+        return
 
     camera = cv2.VideoCapture(CONFIG.camera_index, cv2.CAP_AVFOUNDATION)
     if not camera.isOpened():
         print("[camera] Could not open camera.")
         sys.exit(1)
 
-    previous_frame = None
     print(f"[startup] Warming up for {CONFIG.warmup_frames} frames to establish baseline...")
     for _ in range(CONFIG.warmup_frames):
+        if control_state.is_shutdown_requested:
+            break
         ok, frame = camera.read()
         if not ok:
             continue
-        processed = preprocess(frame)
-        previous_frame = processed
+        detector.warm(frame)
     print("[startup] Warmup complete. Monitoring for motion...\n")
 
     last_motion_time = 0
+    was_paused = False
 
     try:
         while True:
+            if control_state.is_shutdown_requested:
+                print("\n[shutdown] Shutdown requested via Telegram.")
+                break
+
+            if control_state.is_paused:
+                if not was_paused:
+                    print("\n[paused] Monitoring paused via Telegram. Send 'resume' to continue.\n")
+                    was_paused = True
+                # Keep reading frames so the camera buffer doesn't go stale
+                # and OpenCV doesn't time out, but skip all detection logic.
+                camera.read()
+                time.sleep(0.5)
+                continue
+
+            if was_paused:
+                # Coming back from a pause - the scene may have changed
+                # while we weren't looking, so re-warm the baseline instead
+                # of comparing against a stale pre-pause frame (same reason
+                # this happens after video recording).
+                print(f"[resumed] Monitoring resumed via Telegram. Re-warming for {CONFIG.warmup_frames} frames...")
+                detector.reset()
+                for _ in range(CONFIG.warmup_frames):
+                    ok, warm_frame = camera.read()
+                    if ok:
+                        detector.warm(warm_frame)
+                last_motion_time = time.time()
+                was_paused = False
+                print("[running] Monitoring for motion...\n")
+
             ok, frame = camera.read()
             if not ok:
                 print("[camera] Failed to read frame, retrying...")
                 time.sleep(0.5)
                 continue
 
-            current_frame = preprocess(frame)
-
-            if previous_frame is None:
-                previous_frame = current_frame
-                continue
-
-            changed_percentage, _threshold_img, diff_stats = detect_motion(previous_frame, current_frame)
+            result = detector.process(frame)
 
             # Live calibration printout - overwrites the same terminal line.
-            if CALIBRATE_MODE:
+            # (result.max_diff is None only on a frame establishing a fresh
+            # baseline, which shouldn't normally happen post-warmup.)
+            if CALIBRATE_MODE and result.max_diff is not None:
                 print(
-                    f"\r[calibrate] max_pixel_diff={diff_stats['max_diff']:>3} "
+                    f"\r[calibrate] max_pixel_diff={result.max_diff:>3} "
                     f"(pixel_change_threshold={CONFIG.pixel_change_threshold})  |  "
-                    f"frame_changed={changed_percentage:6.2f}% "
+                    f"frame_changed={result.changed_percentage:6.2f}% "
                     f"(motion_percent_threshold={CONFIG.motion_percent_threshold}%)   ",
                     end="",
                     flush=True,
@@ -261,17 +296,16 @@ def main():
 
             now = time.time()
 
-            if changed_percentage > CONFIG.motion_percent_threshold and (now - last_motion_time) > CONFIG.cooldown_seconds:
+            if result.motion_detected and (now - last_motion_time) > CONFIG.cooldown_seconds:
                 last_motion_time = now
                 timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
                 if CALIBRATE_MODE:
-                    print(f"\n[motion] Would trigger at {timestamp} (frame_changed={changed_percentage:.2f}%) - calibration mode, nothing saved/sent.")
+                    print(f"\n[motion] Would trigger at {timestamp} (frame_changed={result.changed_percentage:.2f}%) - calibration mode, nothing saved/sent.")
                     print()
-                    previous_frame = current_frame
                     continue
 
-                print(f"\n[motion] Motion detected at {timestamp} (frame_changed={changed_percentage:.2f}%)")
+                print(f"\n[motion] Motion detected at {timestamp} (frame_changed={result.changed_percentage:.2f}%)")
 
                 photo = save_snapshot(frame)
                 if photo:
@@ -290,15 +324,15 @@ def main():
                     camera = cv2.VideoCapture(CONFIG.camera_index, cv2.CAP_AVFOUNDATION)
 
                     # Re-warm: auto-exposure/white balance need a moment to settle,
-                    # and the old previous_frame is stale. Comparing against it
+                    # and the old baseline is stale. Comparing against it
                     # causes a false-positive trigger that loops forever.
                     print(f"[video] Re-warming camera for {CONFIG.warmup_frames} frames after reopen...")
-                    previous_frame = None
+                    detector.reset()
                     for _ in range(CONFIG.warmup_frames):
                         ok, warm_frame = camera.read()
                         if not ok:
                             continue
-                        previous_frame = preprocess(warm_frame)
+                        detector.warm(warm_frame)
 
                     # Reset cooldown so we don't instantly re-trigger either.
                     last_motion_time = time.time()
@@ -306,13 +340,12 @@ def main():
                 print()  # blank line before calibration printout resumes
                 print("[running] Monitoring for motion...\n")
 
-            previous_frame = current_frame
-
     except KeyboardInterrupt:
         print("\n[shutdown] Stopping Motion Monitor...")
     finally:
         camera.release()
         caffeinate_process.terminate()
+        listener.stop()
 
 
 if __name__ == "__main__":

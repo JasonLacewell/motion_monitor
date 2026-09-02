@@ -36,6 +36,7 @@ class Config:
         self.send_telegram = raw["telegram"]["enabled"]
         self.telegram_token = raw["telegram"]["bot_token"]
         self.telegram_chat_id = raw["telegram"]["chat_id"]
+        self.telegram_listen_for_commands = raw["telegram"].get("listen_for_commands", True)
 
         self.pixel_change_threshold = raw["detection"]["pixel_change_threshold"]
         self.motion_percent_threshold = raw["detection"]["motion_percent_threshold"]
@@ -50,6 +51,11 @@ class Config:
             self.cooldown_seconds = raw["detection"]["cooldown_seconds"]
 
         self.warmup_frames = raw["detection"]["warmup_frames"]
+
+        # Grace period before the camera baseline is ever captured, so you
+        # can get out of frame first. Defaults to 30s if not present, so
+        # existing config.json files without this field keep working.
+        self.startup_delay_seconds = raw.get("startup_delay_seconds", 30)
 
     @classmethod
     def load(cls, project_root: Path) -> "Config":

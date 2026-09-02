@@ -1,6 +1,8 @@
 {
   "camera_index": 0,
 
+  "startup_delay_seconds": 30,
+
   "media_dir": "./motion_media",
 
   "photo": {
@@ -23,7 +25,8 @@
   "telegram": {
     "enabled": true,
     "bot_token": "PASTE_YOUR_BOT_TOKEN_HERE",
-    "chat_id": "PASTE_YOUR_CHAT_ID_HERE"
+    "chat_id": "PASTE_YOUR_CHAT_ID_HERE",
+    "listen_for_commands": true
   },
 
   "detection": {

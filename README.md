@@ -8,6 +8,10 @@ detects motion:
 - Optionally sends both to a Telegram chat, so you get an alert on your
   phone almost instantly
 
+You can also pause, resume, or shut down the monitor remotely by sending
+a message to your Telegram bot — handy if you're about to walk into its
+field of view and don't want to trigger it.
+
 Runs entirely on your Mac — nothing is streamed or uploaded
 continuously, only the photo/clip from an actual motion event.
 
@@ -62,10 +66,42 @@ chat id (see below for how to get these).
 This activates the virtual environment for you and starts the monitor.
 Press `Ctrl+C` to stop.
 
+On startup, the program waits `startup_delay_seconds` (30s by default)
+before opening the camera and establishing its baseline — this is your
+window to get out of frame. If you're still visible when the baseline is
+captured, leaving afterward will itself register as motion. A live
+countdown prints to the terminal during this wait.
+
 ```bash
 ./run.sh --calibrate 
 ```
 This activates the virtual environment and starts the monitor in calibration mode: Only data on actual pixel differences and % of frame change will be printed to the terminal. No images, video or audio will be saved. 
+
+## Remote control via Telegram
+
+If Telegram is configured (see below), you can control the monitor by
+sending it messages from your phone — no need to be at the Mac:
+
+| Command              | Effect                                                         |
+|-----------------------|------------------------------------------------------------------|
+| `pause`                | Stops evaluating motion. Camera stays open, nothing triggers.   |
+| `resume`               | Re-establishes the baseline, then resumes normal monitoring.    |
+| `shutdown` or `stop`   | Cleanly stops the program.                                       |
+
+Commands are case-insensitive (`PAUSE`, `Pause`, `pause` all work), and
+the `/` prefix is optional (`/pause` also works). Misspelled or
+unrecognized commands are currently ignored without a reply — if you
+don't see a confirmation, double-check your spelling.
+
+Each command gets a confirmation reply in Telegram, and is also logged
+to the terminal. For security, only messages from the `chat_id`
+configured in `config.json` are honored — anyone else who messages your
+bot is silently ignored, since this project is open source and the bot
+itself could otherwise be discovered and controlled by a stranger.
+
+Set `telegram.listen_for_commands` to `false` in `config.json` if you
+want outbound notifications (photo/video alerts) without this inbound
+control feature.
 
 ## Configuration
 
@@ -77,6 +113,7 @@ committed to the repo.
 | Section     | Key                       | Meaning                                                    |
 |-------------|----------------------------|-------------------------------------------------------------|
 | top-level   | `camera_index`             | Which camera to use (`0` is usually the built-in camera)   |
+| top-level   | `startup_delay_seconds`    | Wait time before the camera opens, so you can get out of frame (default 30) |
 | top-level   | `media_dir`                | Where photos/clips are saved locally                        |
 | `detection` | `pixel_change_threshold`   | Lower = more sensitive to per-pixel change                  |
 | `detection` | `motion_percent_threshold` | % of frame that must change to count as motion              |
@@ -93,6 +130,7 @@ committed to the repo.
 | `telegram`  | `enabled`                  | Set `false` to disable Telegram entirely and stay fully local |
 | `telegram`  | `bot_token`                | Your bot's token from BotFather                              |
 | `telegram`  | `chat_id`                  | Your personal chat id                                        |
+| `telegram`  | `listen_for_commands`      | Set `false` to disable remote pause/resume/shutdown (default `true`) |
 
 If `config/config.json` is missing entirely, the program prints setup
 instructions and exits rather than failing with a confusing error.
@@ -220,13 +258,18 @@ Grant both to whatever terminal/editor you're running the script from.
 ```
 motion_monitor/
 ├── config/
-│   ├── config.example.json   # safe template, committed to git
-│   └── config.json           # your real settings, git-ignored
+│   ├── config.example.json      # safe template, committed to git
+│   └── config.json              # your real settings, git-ignored
 ├── src/
-│   └── motion_monitor.py     # main program
+│   ├── motion_monitor.py        # main program / entry point
+│   ├── config.py                # loads and exposes config.json as a Config object
+│   ├── telegram_control.py      # inbound Telegram commands (pause/resume/shutdown)
+│   └── detection/
+│       ├── base.py              # MotionDetector interface
+│       └── frame_difference.py  # the current (only) detection algorithm
 ├── requirements.txt
-├── setup.sh                  # one-time setup
-├── run.sh                    # start the monitor
+├── setup.sh                     # one-time setup
+├── run.sh                       # start the monitor
 ├── .gitignore
 └── README.md
 ```
