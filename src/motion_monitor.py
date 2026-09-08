@@ -38,6 +38,7 @@ import cv2
 import requests
 
 from config import Config
+from audio_devices import AudioDeviceResolutionError, resolve_audio_device_name
 from detection.frame_difference import FrameDifferenceDetector
 from telegram_control import ControlState, TelegramCommandListener
 
@@ -196,7 +197,39 @@ def wait_before_starting(delay_seconds: int, control_state: ControlState) -> boo
     return True
 
 
+def resolve_configured_audio_device() -> None:
+    """Resolve a configured AVFoundation audio-device name at startup.
+
+    The resolved index is kept only in memory, so every process launch obtains
+    a fresh index from AVFoundation instead of persisting a stale one.
+    """
+    if not CONFIG.video_enabled or not CONFIG.audio_enabled:
+        return
+
+    if CONFIG.audio_input_device is None:
+        print(
+            "[audio] WARNING: Using legacy numeric video.ffmpeg_audio_device "
+            f'index "{CONFIG.ffmpeg_audio_device}". AVFoundation indexes can change '
+            "when hardware is added or removed. Set audio.input_device to an exact "
+            "device name to resolve it at startup."
+        )
+        return
+
+    device = resolve_audio_device_name(CONFIG.audio_input_device)
+    CONFIG.ffmpeg_audio_device = device.index
+    print(
+        f'[audio] Requested device: "{CONFIG.audio_input_device}"\n'
+        f'[audio] Resolved device: "{device.name}" (AVFoundation index {device.index})'
+    )
+
+
 def main():
+    try:
+        resolve_configured_audio_device()
+    except AudioDeviceResolutionError as error:
+        print(f"[audio] Startup failed: {error}")
+        sys.exit(1)
+
     control_state = ControlState()
     listener = TelegramCommandListener(CONFIG, control_state)
     listener.start()

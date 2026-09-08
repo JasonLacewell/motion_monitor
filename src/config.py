@@ -27,11 +27,30 @@ class Config:
         self.video_enabled = raw["video"].get("enabled", True)
         self.record_seconds = raw["video"]["record_seconds"]
         self.ffmpeg_video_device = raw["video"]["ffmpeg_video_device"]
-        self.ffmpeg_audio_device = raw["video"]["ffmpeg_audio_device"]
+        # Legacy numeric fallback.  When audio.input_device is set, startup
+        # resolves that human-readable name to the current index and replaces
+        # this in-memory value before ffmpeg is invoked.
+        self.ffmpeg_audio_device = raw["video"].get("ffmpeg_audio_device")
         self.ffmpeg_framerate = raw["video"]["ffmpeg_framerate"]
         self.ffmpeg_resolution = raw["video"]["ffmpeg_resolution"]
 
-        self.audio_enabled = raw.get("audio", {}).get("enabled", True)
+        audio = raw.get("audio", {})
+        self.audio_enabled = audio.get("enabled", True)
+        self.audio_input_device = audio.get("input_device")
+        if self.audio_input_device is not None:
+            if not isinstance(self.audio_input_device, str) or not self.audio_input_device.strip():
+                raise ValueError("audio.input_device must be a non-empty device name or null.")
+            self.audio_input_device = self.audio_input_device.strip()
+        if (
+            self.video_enabled
+            and self.audio_enabled
+            and self.audio_input_device is None
+            and self.ffmpeg_audio_device is None
+        ):
+            raise ValueError(
+                "Audio is enabled, but neither audio.input_device nor "
+                "video.ffmpeg_audio_device is configured."
+            )
 
         self.send_telegram = raw["telegram"]["enabled"]
         self.telegram_token = raw["telegram"]["bot_token"]
