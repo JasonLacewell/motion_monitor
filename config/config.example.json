@@ -19,7 +19,8 @@
   },
 
   "audio": {
-    "enabled": true
+    "enabled": true,
+    "input_device": null
   },
 
   "telegram": {

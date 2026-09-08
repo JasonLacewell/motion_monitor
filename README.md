@@ -123,10 +123,11 @@ committed to the repo.
 | `video`     | `enabled`                  | Set `false` to disable video recording                      |
 | `video`     | `record_seconds`           | Length of each recorded clip                                 |
 | `video`     | `ffmpeg_video_device`      | Camera device index for ffmpeg (see below)                  |
-| `video`     | `ffmpeg_audio_device`      | Microphone device index for ffmpeg (see below)               |
+| `video`     | `ffmpeg_audio_device`      | Legacy microphone index for ffmpeg; use `audio.input_device` instead when possible |
 | `video`     | `ffmpeg_framerate`         | Recording framerate                                          |
 | `video`     | `ffmpeg_resolution`        | Recording resolution                                         |
 | `audio`     | `enabled`                  | Set `false` to disable audio recording                       |
+| `audio`     | `input_device`             | Exact AVFoundation microphone name; resolves to its current index at startup |
 | `telegram`  | `enabled`                  | Set `false` to disable Telegram entirely and stay fully local |
 | `telegram`  | `bot_token`                | Your bot's token from BotFather                              |
 | `telegram`  | `chat_id`                  | Your personal chat id                                        |
@@ -139,16 +140,41 @@ If Telegram credentials are missing or still set to the placeholder
 values, the program keeps working and saves everything locally — it
 just skips the Telegram upload step and logs that it did so.
 
-### Finding your ffmpeg device indices
+### Choosing an audio input device
+
+For audio, prefer a human-readable device name rather than a numeric
+AVFoundation index. Numeric indexes can change when microphones, displays,
+docks, or other hardware are added or removed.
+
+List the names currently seen by ffmpeg:
 
 ```bash
 ffmpeg -f avfoundation -list_devices true -i ""
 ```
 
-This prints numbered video devices and numbered audio devices. Match
-the numbers to your Mac's built-in camera and microphone, and set
-`ffmpeg_video_device` / `ffmpeg_audio_device` in `config/config.json`
-accordingly.
+The same command also lists numbered video devices.
+`video.ffmpeg_video_device` remains a numeric ffmpeg index.
+
+Copy the desired name exactly into `audio.input_device` in
+`config/config.json`:
+
+```json
+"audio": {
+  "enabled": true,
+  "input_device": "MacBook Pro Microphone"
+}
+```
+
+On every startup, Motion Monitor discovers the current AVFoundation devices
+and resolves that name to its current numeric index before it records. It logs
+both the requested name and the resolved index. If the name is missing or
+matches more than one device, the monitor stops with a list of available
+devices rather than recording from an unintended microphone.
+
+`audio.input_device` is optional for compatibility with existing
+configurations. If it is omitted or `null`, the monitor uses the legacy
+`video.ffmpeg_audio_device` numeric index and prints a warning. The video
+camera setting, `video.ffmpeg_video_device`, remains a numeric ffmpeg index.
 
 ### Setting up the Telegram bot
 
