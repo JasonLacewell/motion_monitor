@@ -41,7 +41,12 @@ class Config:
             if not isinstance(self.audio_input_device, str) or not self.audio_input_device.strip():
                 raise ValueError("audio.input_device must be a non-empty device name or null.")
             self.audio_input_device = self.audio_input_device.strip()
-        if self.audio_enabled and self.audio_input_device is None and self.ffmpeg_audio_device is None:
+        if (
+            self.video_enabled
+            and self.audio_enabled
+            and self.audio_input_device is None
+            and self.ffmpeg_audio_device is None
+        ):
             raise ValueError(
                 "Audio is enabled, but neither audio.input_device nor "
                 "video.ffmpeg_audio_device is configured."

@@ -156,12 +156,13 @@ The same command also lists numbered video devices.
 `video.ffmpeg_video_device` remains a numeric ffmpeg index.
 
 Copy the desired name exactly into `audio.input_device` in
-`config/config.json`:
+`config/config.json`. Replace `YOUR_MICROPHONE_NAME_HERE` with the exact
+name returned by the ffmpeg command above:
 
 ```json
 "audio": {
   "enabled": true,
-  "input_device": "MacBook Pro Microphone"
+  "input_device": "YOUR_MICROPHONE_NAME_HERE"
 }
 ```
 
